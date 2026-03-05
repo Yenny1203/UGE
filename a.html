@@ -1,0 +1,53 @@
+<!doctype html>
+<html>
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>A — Input</title>
+    
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=DotGothic16&display=swap" rel="stylesheet">
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"></script>
+
+    <style>
+        /* 2. CSS font-family 수정 */
+        body { 
+            margin:0; 
+            background:#0B0B0D; 
+            color:#fff; 
+            font-family: "DotGothic16", system-ui, sans-serif; 
+        }
+
+        #ui {
+            position: fixed; top: 28px; left: 50%; transform: translateX(-50%);
+            text-align: center; z-index: 10;
+        }
+
+        #q { margin-top:15px; font-size:20px; opacity: .85; margin-bottom: 15px; }
+
+        #textInput {
+            width: 420px; max-width: 80vw;
+            padding: 10px 12px; border-radius: 8px;
+            border: 1px solid rgba(255,255,255,.18);
+            background: rgba(255,255,255,.06);
+            color: #fff; outline: none;
+            text-align: center;
+            /* 3. 입력창에도 폰트 적용되도록 추가 */
+            font-family: "DotGothic16", sans-serif; 
+        }
+
+        #hint { font-size: 12px; opacity: .6; margin-top: 10px; }
+        kbd { padding:2px 6px; border:1px solid rgba(255,255,255,.2); border-radius:6px; }
+    </style>
+</head>
+<body>
+    <div id="ui">
+        <div id="q">Enter text here that you would never share with others.</div>
+        <input id="textInput" placeholder="Type your sentence…" autocomplete="off"/>
+        <div id="hint">Press <kbd>Enter</kbd> </div>
+    </div>
+    <script type="module" src="./a.js"></script>
+</body>
+</html>
