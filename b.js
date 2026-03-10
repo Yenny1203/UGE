@@ -23,7 +23,23 @@ new p5((p) => {
   const CONNECTION_MAX_DIST_CELLS = 6;
   const CONNECTION_MAX_SESSIONS = 3;
 
+  // ====== Pulse 설정 ======
+  // pulse 하나가 A→B 를 이동하는 데 걸리는 프레임 수
+  const PULSE_TRAVEL_FRAMES = 60;
+  // 동시에 같은 연결에 존재할 수 있는 최대 pulse 수
+  const PULSE_MAX_PER_EDGE = 2;
+  // pulse가 연결선 위를 이동하는 점의 크기
+  const PULSE_DOT_SIZE = 4;
+  // pulse 생성 간격 (프레임). 새 session 진입 후 이 간격마다 pulse 추가 생성
+  const PULSE_SPAWN_INTERVAL = 30;
+
+  // pulses: [{ fromIdx, toIdx, t, sessionId, createdFrame }]
+  let pulses = [];
+  let lastPulseSpawnFrame = -9999;
+
   let sessionCounter = 0;
+
+
 
   // ====== 그리드 ======
   function updateGridConfig() {
@@ -34,6 +50,7 @@ new p5((p) => {
     CAPACITY = COLS * ROWS;
     slots = Array(CAPACITY).fill(null);
     queue = [];
+    pulses = [];
   }
 
   function cellSize() {
@@ -119,7 +136,58 @@ new p5((p) => {
     })));
   }
 
-  // ====== 관계선 ======
+  // ====== Pulse 생성 ======
+  // 현재 활성 세션의 연결 가능한 엣지 목록을 모아서 pulse를 spawning
+  function spawnPulsesForSession(sessionId, cs, gx0, gy0) {
+    const maxDist = CONNECTION_MAX_DIST_CELLS * cs;
+    const glyphs = [];
+
+    for (let i = 0; i < CAPACITY; i++) {
+      const g = slots[i];
+      if (!g || g.hidden) continue;
+      if (g.sessionId === sessionId) glyphs.push({ g, idx: i });
+    }
+
+    if (glyphs.length < 2) return;
+
+    // 연결 가능한 엣지 수집
+    const edges = [];
+    for (let ai = 0; ai < glyphs.length; ai++) {
+      for (let bi = ai + 1; bi < glyphs.length; bi++) {
+        const { idx: ia } = glyphs[ai];
+        const { idx: ib } = glyphs[bi];
+        const ca = slotCenter(ia, cs, gx0, gy0);
+        const cb = slotCenter(ib, cs, gx0, gy0);
+        const dist = p.dist(ca.x, ca.y, cb.x, cb.y);
+        if (dist <= maxDist) edges.push({ ia, ib });
+      }
+    }
+
+    if (edges.length === 0) return;
+
+    // 엣지 중 랜덤으로 골라 pulse 생성 (최대 pulse 수 제한)
+    const edge = p.random(edges);
+    const { ia, ib } = edge;
+
+    // 이미 이 엣지에 pulse가 너무 많으면 생략
+    const existing = pulses.filter(
+      pu => (pu.fromIdx === ia && pu.toIdx === ib) ||
+            (pu.fromIdx === ib && pu.toIdx === ia)
+    );
+    if (existing.length >= PULSE_MAX_PER_EDGE) return;
+
+    // 방향: 랜덤하게 A→B 또는 B→A
+    const [from, to] = p.random() > 0.5 ? [ia, ib] : [ib, ia];
+    pulses.push({
+      fromIdx: from,
+      toIdx: to,
+      t: 0,                     // 0 ~ 1 진행도
+      sessionId,
+      createdFrame: p.frameCount,
+    });
+  }
+
+  // ====== 관계선 + Pulse 렌더 ======
   function drawConnections(cs, gx0, gy0) {
     const sessionMap = new Map();
     for (let i = 0; i < CAPACITY; i++) {
@@ -131,6 +199,9 @@ new p5((p) => {
 
     const sessions = [...sessionMap.entries()].sort((a, b) => b[0] - a[0]);
     const maxDist = CONNECTION_MAX_DIST_CELLS * cs;
+
+    // 현재 유효 엣지 목록 (pulse 충돌 검사용)
+    const validEdges = new Set();
 
     sessions.slice(0, CONNECTION_MAX_SESSIONS).forEach(([sid, glyphs], sessionAge) => {
       const ageFactor = 1 - sessionAge / CONNECTION_MAX_SESSIONS;
@@ -144,6 +215,9 @@ new p5((p) => {
           const cb = slotCenter(ib, cs, gx0, gy0);
           const dist = p.dist(ca.x, ca.y, cb.x, cb.y);
           if (dist > maxDist) continue;
+
+          // 유효 엣지로 등록
+          validEdges.add(`${Math.min(ia, ib)}-${Math.max(ia, ib)}`);
 
           const distFactor = 1 - dist / maxDist;
           const alphaFactor = Math.min(getAlpha(ga), getAlpha(gb)) / 255;
@@ -165,6 +239,73 @@ new p5((p) => {
         }
       }
     });
+
+    // ====== Pulse 업데이트 & 렌더 ======
+    // 유효하지 않은 엣지의 pulse 제거 + 완료된 pulse 제거
+    pulses = pulses.filter(pu => {
+      if (pu.t >= 1) return false;
+      const key = `${Math.min(pu.fromIdx, pu.toIdx)}-${Math.max(pu.fromIdx, pu.toIdx)}`;
+      return validEdges.has(key);
+    });
+
+    // pulse 이동 + 렌더
+    for (const pu of pulses) {
+      pu.t += 1 / PULSE_TRAVEL_FRAMES;
+      pu.t = Math.min(pu.t, 1);
+
+      const ca = slotCenter(pu.fromIdx, cs, gx0, gy0);
+      const cb = slotCenter(pu.toIdx, cs, gx0, gy0);
+
+      if (!ca || !cb) continue;
+
+      const px = p.lerp(ca.x, cb.x, pu.t);
+      const py = p.lerp(ca.y, cb.y, pu.t);
+
+      // 현재 세션 pulse는 밝게, 이전 세션은 희미하게
+      const isCurrentSession = pu.sessionId === sessionCounter - 1;
+
+      // pulse의 글리프 alpha 반영
+      const gFrom = slots[pu.fromIdx];
+      const gTo   = slots[pu.toIdx];
+      const alphaFactor = (gFrom && gTo)
+        ? Math.min(getAlpha(gFrom), getAlpha(gTo)) / 255
+        : 1;
+
+      p.push();
+      p.noStroke();
+
+      if (isCurrentSession) {
+        // 현재 세션: 밝은 cyan glow 효과
+        // 외곽 glow (큰 반투명 원)
+        p.fill(0, 210, 230, 40 * alphaFactor);
+        p.circle(px, py, PULSE_DOT_SIZE * 4);
+
+        // 중간 glow
+        p.fill(0, 230, 255, 100 * alphaFactor);
+        p.circle(px, py, PULSE_DOT_SIZE * 2);
+
+        // 핵심 점
+        p.fill(200, 255, 255, 220 * alphaFactor);
+        p.circle(px, py, PULSE_DOT_SIZE);
+
+      } else {
+        // 이전 세션: 희미한 pulse
+        p.fill(0, 180, 200, 60 * alphaFactor);
+        p.circle(px, py, PULSE_DOT_SIZE * 1.5);
+      }
+
+      p.pop();
+    }
+
+    // ====== 주기적 pulse 생성 ======
+    // 현재 세션에 대해 PULSE_SPAWN_INTERVAL 마다 새 pulse 추가
+    if (
+      sessionCounter > 0 &&
+      p.frameCount - lastPulseSpawnFrame >= PULSE_SPAWN_INTERVAL
+    ) {
+      spawnPulsesForSession(sessionCounter - 1, cs, gx0, gy0);
+      lastPulseSpawnFrame = p.frameCount;
+    }
   }
 
   // ====== 글리프 렌더 ======
@@ -226,22 +367,22 @@ new p5((p) => {
     const cs = cellSize();
     const { x: gx0, y: gy0 } = gridOrigin();
 
-    // 배경 노드
-    p.fill(0, 210, 230, 20);
-    p.textSize(12);
+    // ── 레이어 1: 배경 hash 텍스트 (고정, 희미) ──
+    p.fill(0, 210, 230, 10);
+    p.textSize(11);
     p.textFont("monospace");
     backgroundNodes.forEach((n, i) => {
-      p.text(activeHash.substring(i, i + 15), n.x, n.y);
-      n.y += n.speed;
-      if (n.y > p.height) n.y = -20;
+      p.text(activeHash.substring(i % activeHash.length, (i % activeHash.length) + 12), n.x, n.y);
     });
 
-    // 그리드 가이드
-    p.stroke(0, 200, 210, 30);
+    // ── 레이어 2: 그리드 (고정, 낮은 opacity) ──
+    p.stroke(0, 200, 210, 12);
+    p.strokeWeight(1);
     for (let i = 0; i <= COLS; i++) p.line(gx0 + i * cs, gy0, gx0 + i * cs, gy0 + cs * ROWS);
     for (let i = 0; i <= ROWS; i++) p.line(gx0, gy0 + i * cs, gx0 + cs * COLS, gy0 + i * cs);
 
-    // 관계선 (글리프 아래 레이어)
+    // ── 레이어 3: 글리프 + 관계선 + pulse ──
+    // 관계선 + Pulse
     drawConnections(cs, gx0, gy0);
 
     // 글리프 렌더
@@ -264,6 +405,10 @@ new p5((p) => {
 
       drawGlyph(g, tx, ty, cs);
     }
+
+    // pulse가 살아있으면 루프 유지
+    if (pulses.length > 0) isAnimating = true;
+
     if (!isAnimating) p.noLoop();
   };
 
@@ -280,6 +425,10 @@ new p5((p) => {
           s.fadeStartFrame = p.frameCount;
         }
       });
+
+      // 새 entry 진입 시 기존 pulse 초기화 (새 세션 pulse로 교체)
+      pulses = pulses.filter(pu => pu.sessionId !== currentSession);
+      lastPulseSpawnFrame = p.frameCount - PULSE_SPAWN_INTERVAL;
 
       const chars = text.toUpperCase().replace(/\s/g, "").split("").slice(0, 20);
       const cs = cellSize();
