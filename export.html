@@ -1,0 +1,385 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Pattern Export</title>
+  <style>
+    :root {
+      --bg: #020608;
+      --panel: #061015;
+      --cyan: #5fd6e8;
+      --cyan-dim: rgba(95, 214, 232, 0.22);
+      --cyan-soft: rgba(95, 214, 232, 0.08);
+      --text: rgba(180, 225, 235, 0.92);
+      --text-dim: rgba(120, 170, 180, 0.7);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background:
+        radial-gradient(circle at 50% 40%, rgba(20, 60, 72, 0.10), transparent 45%),
+        radial-gradient(circle at 50% 50%, rgba(0, 0, 0, 0.08), transparent 70%),
+        var(--bg);
+      color: var(--text);
+      font-family: Arial, Helvetica, sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 32px 24px 48px;
+      gap: 22px;
+      letter-spacing: 0.02em;
+    }
+
+    h1 {
+      margin: 0 0 6px 0;
+      font-size: 28px;
+      font-weight: 500;
+      color: rgba(190, 220, 228, 0.85);
+    }
+
+    .controls {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      flex-wrap: wrap;
+      justify-content: center;
+    }
+
+    input,
+    button {
+      height: 46px;
+      padding: 10px 14px;
+      font-size: 16px;
+      border: 1px solid rgba(95, 214, 232, 0.22);
+      background: rgba(4, 12, 16, 0.88);
+      color: rgba(205, 226, 232, 0.9);
+      border-radius: 0;
+      outline: none;
+      box-shadow: inset 0 0 0 1px rgba(95, 214, 232, 0.05);
+    }
+
+    input {
+      width: 78px;
+      text-align: center;
+      text-transform: uppercase;
+    }
+
+    button {
+      cursor: pointer;
+      transition: background 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+    }
+
+    button:hover {
+      background: rgba(10, 24, 30, 0.95);
+      border-color: rgba(95, 214, 232, 0.4);
+      box-shadow:
+        inset 0 0 0 1px rgba(95, 214, 232, 0.08),
+        0 0 14px rgba(95, 214, 232, 0.08);
+    }
+
+    #canvas-wrap {
+      position: relative;
+      display: inline-block;
+      padding: 0;
+      background: transparent;
+    }
+
+    .note {
+      color: var(--text-dim);
+      font-size: 13px;
+      text-align: center;
+      max-width: 620px;
+      line-height: 1.65;
+    }
+
+    .hud-label {
+      font-size: 11px;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+      color: rgba(95, 214, 232, 0.85);
+    }
+  </style>
+</head>
+<body>
+  <h1>7x7 Pattern Export</h1>
+
+  <div class="controls">
+    <span class="hud-label">Letter</span>
+    <input id="letterInput" type="text" maxlength="1" value="A" />
+    <button id="previewBtn">Preview</button>
+    <button id="downloadBtn">Download PNG</button>
+    <button id="downloadAllBtn">Download A–Z</button>
+  </div>
+
+  <div id="canvas-wrap"></div>
+
+  <div class="note">
+    Type one character, preview it, then download as PNG.<br />
+    You can also export A–Z one by one automatically.
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/p5@1.9.4/lib/p5.min.js"></script>
+
+  <script type="module">
+    import { generatePatternCells } from './common.js';
+
+    const SIZE = 900;
+    const GRID_COUNT = 7;
+    let currentLetter = 'A';
+    let currentP5;
+
+    function sanitizeLetter(value) {
+      if (!value || value.length === 0) return 'A';
+      return value.charAt(0).toUpperCase();
+    }
+
+    function drawNoiseLayer(p, count = 1400) {
+      p.push();
+      for (let i = 0; i < count; i++) {
+        const x = p.random(p.width);
+        const y = p.random(p.height);
+        const alpha = p.random(4, 14);
+        const size = p.random(0.5, 1.5);
+        p.noStroke();
+        p.fill(110, 190, 210, alpha);
+        p.rect(x, y, size, size);
+      }
+      p.pop();
+    }
+
+    function drawVignette(p) {
+      p.push();
+      p.noFill();
+      for (let i = 0; i < 18; i++) {
+        const a = p.map(i, 0, 17, 2, 16);
+        p.stroke(0, 0, 0, a);
+        p.strokeWeight(22);
+        p.rect(0, 0, p.width, p.height);
+      }
+      p.pop();
+    }
+
+    function drawGrid(p, x0, y0, gridSize) {
+      const step = gridSize / GRID_COUNT;
+
+      p.push();
+
+      // outer frame glow
+      p.noFill();
+      p.stroke(95, 214, 232, 32);
+      p.strokeWeight(6);
+      p.rect(x0, y0, gridSize, gridSize);
+
+      // outer frame
+      p.stroke(95, 214, 232, 92);
+      p.strokeWeight(1.2);
+      p.rect(x0, y0, gridSize, gridSize);
+
+      // inner grid lines
+      for (let i = 1; i < GRID_COUNT; i++) {
+        const x = x0 + i * step;
+        const y = y0 + i * step;
+
+        p.stroke(95, 214, 232, 24);
+        p.strokeWeight(1);
+        p.line(x, y0, x, y0 + gridSize);
+        p.line(x0, y, x0 + gridSize, y);
+      }
+
+      // tiny intersection dots
+      for (let i = 0; i <= GRID_COUNT; i++) {
+        for (let j = 0; j <= GRID_COUNT; j++) {
+          const px = x0 + i * step;
+          const py = y0 + j * step;
+          p.noStroke();
+          p.fill(95, 214, 232, 46);
+          p.circle(px, py, 2.3);
+        }
+      }
+
+      // corner brackets
+      const c = 28;
+      p.stroke(95, 214, 232, 145);
+      p.strokeWeight(2.2);
+
+      // tl
+      p.line(x0, y0, x0 + c, y0);
+      p.line(x0, y0, x0, y0 + c);
+
+      // tr
+      p.line(x0 + gridSize - c, y0, x0 + gridSize, y0);
+      p.line(x0 + gridSize, y0, x0 + gridSize, y0 + c);
+
+      // bl
+      p.line(x0, y0 + gridSize - c, x0, y0 + gridSize);
+      p.line(x0, y0 + gridSize, x0 + c, y0 + gridSize);
+
+      // br
+      p.line(x0 + gridSize - c, y0 + gridSize, x0 + gridSize, y0 + gridSize);
+      p.line(x0 + gridSize, y0 + gridSize - c, x0 + gridSize, y0 + gridSize);
+
+      p.pop();
+    }
+
+    function drawPatternCellsStyled(p, cells, x0, y0, gridSize) {
+      const cellSize = gridSize / GRID_COUNT;
+      const inset = cellSize * 0.12;
+      const fillSize = cellSize - inset;
+
+      p.push();
+
+      for (const { i, j } of cells) {
+        const x = x0 + j * cellSize + inset / 2;
+        const y = y0 + i * cellSize + inset / 2;
+
+        // soft cyan halo around each light-gray block
+        p.drawingContext.shadowBlur = 18;
+        p.drawingContext.shadowColor = 'rgba(95, 214, 232, 0.18)';
+        p.noStroke();
+        p.fill(198, 202, 205, 235);
+        p.rect(x, y, fillSize, fillSize);
+
+        // subtle edge line to make it feel sharper
+        p.drawingContext.shadowBlur = 0;
+        p.stroke(235, 240, 242, 35);
+        p.strokeWeight(0.8);
+        p.noFill();
+        p.rect(x, y, fillSize, fillSize);
+      }
+
+      p.pop();
+    }
+
+    function drawHudText(p, x0, y0, gridSize, letter) {
+      p.push();
+
+      p.fill(95, 214, 232, 120);
+      p.noStroke();
+      p.textFont('Arial');
+      p.textSize(11);
+      p.textAlign(p.LEFT, p.TOP);
+      p.text('ENCRYPT_PATTERN // ' + letter, x0, y0 - 28);
+
+      p.textAlign(p.RIGHT, p.BOTTOM);
+      p.fill(170, 190, 195, 110);
+      p.text('EXPORT MODE', x0 + gridSize, y0 + gridSize + 24);
+
+      p.pop();
+    }
+
+    function drawBackgroundScan(p) {
+      p.push();
+
+      // faint horizontal scan lines
+      for (let y = 0; y < p.height; y += 3) {
+        p.stroke(70, 150, 170, 7);
+        p.line(0, y, p.width, y);
+      }
+
+      // soft darker banding
+      for (let i = 0; i < 6; i++) {
+        const y = p.random(p.height);
+        const h = p.random(40, 120);
+        p.noStroke();
+        p.fill(255, 255, 255, 4);
+        p.rect(0, y, p.width, h);
+      }
+
+      p.pop();
+    }
+
+    function drawPattern(p, letter) {
+      p.clear();
+      p.background(2, 6, 8);
+
+      drawBackgroundScan(p);
+      drawNoiseLayer(p, 1700);
+
+      const gridSize = p.width * 0.68;
+      const x0 = (p.width - gridSize) / 2;
+      const y0 = (p.height - gridSize) / 2;
+
+      drawGrid(p, x0, y0, gridSize);
+
+      const cells = generatePatternCells(letter, p);
+      drawPatternCellsStyled(p, cells, x0, y0, gridSize);
+      drawHudText(p, x0, y0, gridSize, letter);
+
+      drawVignette(p);
+    }
+
+    function createPreview(letter) {
+      const wrap = document.getElementById('canvas-wrap');
+
+      if (currentP5) currentP5.remove();
+
+      currentP5 = new p5((p) => {
+        p.setup = () => {
+          const c = p.createCanvas(SIZE, SIZE);
+          c.parent(wrap);
+          p.pixelDensity(2);
+          p.noLoop();
+          drawPattern(p, letter);
+        };
+      });
+    }
+
+    function exportLetterImage(letter) {
+      new p5((p) => {
+        p.setup = () => {
+          p.createCanvas(SIZE, SIZE);
+          p.pixelDensity(2);
+          p.noLoop();
+          drawPattern(p, letter);
+          p.saveCanvas(`letter_${letter}`, 'png');
+          setTimeout(() => p.remove(), 120);
+        };
+      });
+    }
+
+    function exportAllLetters() {
+      const letters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('');
+      letters.forEach((letter, index) => {
+        setTimeout(() => {
+          exportLetterImage(letter);
+        }, index * 320);
+      });
+    }
+
+    document.getElementById('previewBtn').addEventListener('click', () => {
+      const value = document.getElementById('letterInput').value;
+      currentLetter = sanitizeLetter(value);
+      document.getElementById('letterInput').value = currentLetter;
+      createPreview(currentLetter);
+    });
+
+    document.getElementById('downloadBtn').addEventListener('click', () => {
+      const value = document.getElementById('letterInput').value;
+      currentLetter = sanitizeLetter(value);
+      document.getElementById('letterInput').value = currentLetter;
+      exportLetterImage(currentLetter);
+    });
+
+    document.getElementById('downloadAllBtn').addEventListener('click', () => {
+      exportAllLetters();
+    });
+
+    document.getElementById('letterInput').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        const value = document.getElementById('letterInput').value;
+        currentLetter = sanitizeLetter(value);
+        document.getElementById('letterInput').value = currentLetter;
+        createPreview(currentLetter);
+      }
+    });
+
+    createPreview(currentLetter);
+  </script>
+</body>
+</html>
